@@ -65,6 +65,60 @@ def get_model(name, **kwargs):
     raise ValueError(f"Unknown model: {name}")
 
 
+def save_best_val_features(all_results, X, y, feature_info, output_dir="output"):
+    """Save the selected features for the validation-optimal k, including per-fold frequency.
+
+    Parameters
+    ----------
+    feature_info : pd.DataFrame
+        Must contain columns 'Chromosome', 'Start', 'End' (one row per feature, same order as X columns).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    sc = StandardScaler()
+    X_sc = sc.fit_transform(X)
+
+    for mname, res in all_results.items():
+        best_k_val = max(res["k_inner_val"], key=res["k_inner_val"].get)
+
+        # ── Per-fold frequency table ──────────────────────────────
+        n_features = X.shape[1]
+        freq = np.zeros(n_features, dtype=int)
+        for sel in res["fold_features"]:
+            freq[sel] += 1
+        n_folds = len(res["fold_features"])
+
+        freq_df = pd.DataFrame({
+            "feature_index": np.arange(n_features),
+            "Chromosome": feature_info["Chromosome"].values,
+            "Start": feature_info["Start"].values,
+            "End": feature_info["End"].values,
+            "selection_count": freq,
+            "selection_freq": freq / n_folds,
+        })
+        freq_df = freq_df[freq_df["selection_count"] > 0]
+        freq_df = freq_df.sort_values("selection_count", ascending=False).reset_index(drop=True)
+
+        freq_path = os.path.join(output_dir, f"{mname.lower()}_feature_selection_frequency.csv")
+        freq_df.to_csv(freq_path, index=False)
+        print(f"Feature frequency saved -> {freq_path}")
+
+        # ── Canonical feature set (ReliefF on full data with best_k_val) ─
+        k_safe = min(best_k_val, X_sc.shape[1])
+        sel_idx = relief_f_top_k(X_sc, y, k_safe)
+
+        best_df = pd.DataFrame({
+            "feature_rank": np.arange(1, len(sel_idx) + 1),
+            "feature_index": sel_idx,
+            "Chromosome": feature_info["Chromosome"].values[sel_idx],
+            "Start": feature_info["Start"].values[sel_idx],
+            "End": feature_info["End"].values[sel_idx],
+        })
+        best_path = os.path.join(output_dir, f"{mname.lower()}_best_k_val_features.csv")
+        best_df.to_csv(best_path, index=False)
+        print(f"Best k(val)={best_k_val} features saved -> {best_path}")
+
+
 # ─────────────────────────────────────────────
 # 2.  Inner loop — optimize k 
 # ─────────────────────────────────────────────
@@ -120,7 +174,7 @@ def wessels_pipeline(X, y, model_name, k_candidates,
     results : dict with keys 'train_perf', 'val_perf' (arrays over 300 folds),
               'best_k_per_fold', 'k_inner_train', 'k_inner_val'
     """
-    train_perfs, val_perfs, best_ks = [], [], []
+    train_perfs, val_perfs, best_ks, fold_features = [], [], [], []
     # Accumulate inner curves across all outer reps
     agg_inner_train = {k: [] for k in k_candidates}
     agg_inner_val   = {k: [] for k in k_candidates}
@@ -149,6 +203,7 @@ def wessels_pipeline(X, y, model_name, k_candidates,
 
             k_safe   = min(best_k, X_tr_sc.shape[1])
             sel_idx  = relief_f_top_k(X_tr_sc, y_tr, k_safe)
+            fold_features.append(sel_idx.copy())
             X_tr_k   = X_tr_sc[:, sel_idx]
             X_te_k   = X_te_sc[:, sel_idx]
 
@@ -168,6 +223,7 @@ def wessels_pipeline(X, y, model_name, k_candidates,
         "best_k_per_fold": np.array(best_ks),
         "k_inner_train": {k: np.mean(agg_inner_train[k]) for k in k_candidates},
         "k_inner_val":   {k: np.mean(agg_inner_val[k])   for k in k_candidates},
+        "fold_features": fold_features,
     }
 
 
@@ -176,7 +232,6 @@ def wessels_pipeline(X, y, model_name, k_candidates,
 # ─────────────────────────────────────────────
 
 def run_all(n_outer_reps=100):
-    # Use breast-cancer dataset as a stand-in (replace with your own data)
     df_features = pd.read_csv('Train_call.txt', sep=None, engine='python')
     df_labels = pd.read_csv('Train_clinical.txt', sep=None, engine='python')
     df_features = df_features.drop_duplicates()
@@ -184,8 +239,13 @@ def run_all(n_outer_reps=100):
     X_joined = df_features.T.reset_index().rename(columns={'index': 'Sample'}).merge(df_labels, how='inner', on='Sample')
 
     # Split  training and testing 
-    X = X_joined.drop(columns=['Subgroup', 'Sample']).to_numpy(dtype=float)
+    feature_df = X_joined.drop(columns=['Subgroup', 'Sample'])
+    feature_names = feature_df.columns.to_numpy()
+    X = feature_df.to_numpy(dtype=float)
     y = X_joined['Subgroup'].to_numpy()
+
+    # Keep genomic coordinates for saved features (Chromosome, Start, End)
+    feature_info = df_features[['Chromosome', 'Start', 'End']].reset_index(drop=True)
 
 
 
@@ -195,7 +255,7 @@ def run_all(n_outer_reps=100):
 
     print(k_candidates)
     
-    model_names  = ["RF"] #, "KNN", "SVM"]
+    model_names  = ["SVM"] #, "KNN", "SVM"]
     all_results  = {}
 
     for mname in model_names:
@@ -207,6 +267,8 @@ def run_all(n_outer_reps=100):
             n_outer_folds=3, n_outer_reps=n_outer_reps,
             n_inner_folds=10, n_inner_reps=5
         )
+
+    save_best_val_features(all_results, X, y, feature_info, output_dir="output")
 
     return all_results, k_candidates
 
