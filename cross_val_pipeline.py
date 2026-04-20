@@ -345,7 +345,7 @@ def run_all(n_outer_reps=100):
 
     print(k_candidates)
     
-    model_names  = ["KNN", "SVM"] #, "RF"]
+    model_names  = ["KNN", "SVM", "RF"]
     all_results  = {}
 
     for mname in model_names:
@@ -563,7 +563,7 @@ def print_summary(all_results, k_candidates):
 
 if __name__ == "__main__":
     # Set n_outer_reps=100 for the full protocol; use 10 for a quick test
-    N_REPS = 1
+    N_REPS = 100 
     results, k_cands = run_all(n_outer_reps=N_REPS)
     print_summary(results, k_cands)
     plot_results(results, k_cands)
