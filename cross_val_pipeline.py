@@ -483,6 +483,49 @@ def plot_results(all_results, k_candidates, output_dir="output"):
         saved_paths.append(p)
         print(f"Figure saved -> {p}")
 
+    # ── Combined: all models on one plot (validation only, with 95% CI) ──
+    if len(models) > 1:
+        fig, ax = plt.subplots(figsize=(10, 5.5), dpi=200)
+        _style_ax(ax, fig)
+
+        for mname in models:
+            res = all_results[mname]
+            mc = model_colors.get(mname, "#333333")
+            best_k_val = max(res["k_inner_val"], key=res["k_inner_val"].get)
+
+            tr_mean, tr_lo, tr_hi = [], [], []
+            va_mean, va_lo, va_hi = [], [], []
+            for k in k_candidates:
+                m, lo, hi = _ci95(res["k_inner_train_raw"][k])
+                tr_mean.append(m); tr_lo.append(lo); tr_hi.append(hi)
+                m, lo, hi = _ci95(res["k_inner_val_raw"][k])
+                va_mean.append(m); va_lo.append(lo); va_hi.append(hi)
+
+            ax.fill_between(x_pos, tr_lo, tr_hi, color=mc, alpha=0.08)
+            ax.plot(x_pos, tr_mean, "s--", color=mc, lw=1.6, ms=3, alpha=0.5,
+                    label=f"{mname} Train")
+            ax.fill_between(x_pos, va_lo, va_hi, color=mc, alpha=0.18)
+            ax.plot(x_pos, va_mean, "o-", color=mc, lw=2.2, ms=4,
+                    label=f"{mname} Val (k*={best_k_val})")
+
+            k_to_pos = {k: i for i, k in enumerate(k_candidates)}
+            if best_k_val in k_to_pos:
+                ax.axvline(k_to_pos[best_k_val], color=mc, lw=1.2, ls=":", alpha=0.6)
+
+        ax.set_title("All Models · Average (Sens+Spec)/2   (95% CI shaded)",
+                     fontsize=11, fontweight="bold", color="#1E293B", pad=6)
+        ax.set_xlabel("k  (number of Relief-F features)", fontsize=9)
+        ax.set_ylabel("(Sensitivity + Specificity) / 2", fontsize=9)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(k_candidates)
+        ax.legend(fontsize=8, framealpha=0.6, ncol=2)
+
+        p = os.path.join(output_dir, "all_models_k_vs_perf_average.png")
+        fig.savefig(p, bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
+        saved_paths.append(p)
+        print(f"Figure saved -> {p}")
+
     return saved_paths
 
 
